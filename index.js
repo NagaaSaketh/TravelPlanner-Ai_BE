@@ -3,10 +3,21 @@ require("dotenv").config();
 const OpenAI = require("openai");
 const cors = require("cors");
 const { initializeDB } = require("./db/db.connect");
+const authRouter = require("./routes/auth");
+const cookieParser = require("cookie-parser");
+const userAuth = require("./middlewares/auth");
 const app = express();
 
 app.use(express.json());
-app.use(cors());
+app.use(cookieParser());
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL,
+    credentials: true,
+  }),
+);
+
+app.use("/", authRouter);
 
 initializeDB();
 
@@ -87,7 +98,7 @@ const validDestinations = {
   "Cape Town": "South Africa",
 };
 
-app.get("/api/travel-plan", async (req, res) => {
+app.get("/api/travel-plan", userAuth, async (req, res) => {
   const city = (req.query.city || "").toString().trim();
   const country = (req.query.country || "").toString().trim();
   const days = Number(req.query.days);
