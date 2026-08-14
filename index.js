@@ -6,6 +6,7 @@ const { initializeDB } = require("./db/db.connect");
 const authRouter = require("./routes/auth");
 const cookieParser = require("cookie-parser");
 const userAuth = require("./middlewares/auth");
+const Tour = require("./models/Tour");
 
 const app = express();
 
@@ -22,7 +23,6 @@ app.use(
 app.use("/", authRouter);
 
 initializeDB();
-
 app.get("/", (req, res) => {
   res.send("AI-Travel Planner BE");
 });
@@ -131,20 +131,6 @@ STRICT RULES:
 Return ONLY the JSON object.
 `;
 
-/*
-  Converts:
-
-  "Hyderabad, India"
-  "Tokyo, Japan"
-  "Serengeti, Tanzania"
-
-  into:
-
-  {
-    city: "Hyderabad",
-    country: "India"
-  }
-*/
 const parseLocation = (value) => {
   if (!value || typeof value !== "string") {
     return null;
@@ -172,27 +158,23 @@ const parseLocation = (value) => {
   };
 };
 
-
 app.get("/api/travel-plan", userAuth, async (req, res) => {
   try {
-
-    const startingPointInput = (req.query.startingPoint || "")
-      .toString()
-      .trim();
-
-    const destinationInput = (req.query.destination || "").toString().trim();
-
+    const startingCity = (req.query.startingCity || "").toString().trim();
+    const startingCountry = (req.query.startingCountry || "").toString().trim();
+    const city = (req.query.city || "").toString().trim();
+    const country = (req.query.country || "").toString().trim();
     const days = Number(req.query.days);
 
-    if (!startingPointInput) {
+    if (!startingCity || !startingCountry) {
       return res.status(400).json({
-        message: "Starting point is required.",
+        message: "Starting point city and country are required.",
       });
     }
 
-    if (!destinationInput) {
+    if (!city || !country) {
       return res.status(400).json({
-        message: "Destination is required.",
+        message: "Destination city and country are required.",
       });
     }
 
@@ -202,32 +184,18 @@ app.get("/api/travel-plan", userAuth, async (req, res) => {
       });
     }
 
-    const startingLocation = parseLocation(startingPointInput);
-    const destinationLocation = parseLocation(destinationInput);
+    const startingPoint = `${startingCity}, ${startingCountry}`;
+    const destination = `${city}, ${country}`;
 
-    if (!startingLocation) {
-      return res.status(400).json({
-        message:
-          "Starting point must be in City, Country format. Example: Hyderabad, India",
-      });
-    }
-
-    if (!destinationLocation) {
-      return res.status(400).json({
-        message:
-          "Destination must be in City, Country format. Example: Tokyo, Japan",
-      });
-    }
-
-    const startingPoint = `${startingLocation.city}, ${startingLocation.country}`;
-
-    const destination = `${destinationLocation.city}, ${destinationLocation.country}`;
-
-    if (startingPoint.toLowerCase() === destination.toLowerCase()) {
+    if (
+      startingCity.toLowerCase() === city.toLowerCase() &&
+      startingCountry.toLowerCase() === country.toLowerCase()
+    ) {
       return res.status(400).json({
         message: "Starting point and destination cannot be the same.",
       });
     }
+
     const userPrompt = `
 Create a ${days}-day travel plan.
 
@@ -240,28 +208,20 @@ ${destination}
 Number of days:
 ${days}
 
-IMPORTANT:
-
 The starting point MUST remain exactly:
-
 ${startingPoint}
 
 The destination MUST remain exactly:
-
 ${destination}
 
-Do NOT change the spelling of the city or country.
-
-Do NOT translate the location names.
+Do not change the city or country names.
 
 Create exactly ${days} itinerary days.
 
 Day 1 should include realistic travel or arrival activities from:
-
 ${startingPoint}
 
 to:
-
 ${destination}
 
 ${
@@ -275,7 +235,6 @@ Return ONLY the required JSON object.
 
     const response = await client.chat.completions.create({
       model: MODEL,
-
       messages: [
         {
           role: "system",
@@ -361,13 +320,46 @@ Return ONLY the required JSON object.
       });
     }
 
-    return res.status(200).json(parsed);
+    const savedTour = await Tour.create({
+      user: req.user._id,
+      starting_point: parsed.starting_point,
+      destination: parsed.destination,
+      best_time: parsed.best_time,
+      duration_days: parsed.duration_days,
+      top_attractions: parsed.top_attractions,
+      sample_itinerary: parsed.sample_itinerary,
+      estimated_budget_USD: parsed.estimated_budget_USD,
+      local_tips: parsed.local_tips,
+    });
+
+    return res.status(200).json({
+      ...parsed,
+      tourId: savedTour._id,
+    });
   } catch (err) {
     console.error("Travel plan error:", err);
 
     return res.status(500).json({
       message: "Something went wrong while generating your travel plan.",
       error: process.env.NODE_ENV !== "production" ? err.message : undefined,
+    });
+  }
+});
+
+app.get("/api/my-tours", userAuth, async (req, res) => {
+  try {
+    const tours = await Tour.find({
+      user: req.user._id,
+    }).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      tours,
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      message: "Unable to fetch your tours.",
     });
   }
 });
