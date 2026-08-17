@@ -23,6 +23,8 @@ app.use(
 app.use("/", authRouter);
 
 initializeDB();
+
+
 app.get("/", (req, res) => {
   res.send("AI-Travel Planner BE");
 });
