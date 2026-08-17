@@ -2,7 +2,7 @@ const express = require("express");
 require("dotenv").config();
 const OpenAI = require("openai");
 const cors = require("cors");
-const { initializeDB } = require("./db/db.connect");
+const { initialiseDB } = require("./db/db.connect");
 const authRouter = require("./routes/auth");
 const cookieParser = require("cookie-parser");
 const userAuth = require("./middlewares/auth");
@@ -22,7 +22,7 @@ app.use(
 
 app.use("/", authRouter);
 
-initializeDB();
+initialiseDB();
 
 
 app.get("/", (req, res) => {
