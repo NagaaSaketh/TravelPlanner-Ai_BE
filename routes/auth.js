@@ -6,7 +6,9 @@ const User = require("../models/User");
 
 const authRouter = express.Router();
 
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction =
+  process.env.NODE_ENV?.toLowerCase() === "production" ||
+  process.env.VERCEL_ENV === "production";
 
 const cookieOptions = {
   httpOnly: true,
