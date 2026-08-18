@@ -24,7 +24,6 @@ app.use("/", authRouter);
 
 initialiseDB();
 
-
 app.get("/", (req, res) => {
   res.send("AI-Travel Planner BE");
 });
@@ -89,9 +88,11 @@ Use EXACTLY this JSON structure:
 
 STRICT RULES:
 
-1. starting_point MUST exactly match the starting point provided by the user.
-
-2. destination MUST exactly match the destination provided by the user.
+1. starting_point must represent the location provided by the user.
+2. destination must represent the location provided by the user.
+3. If only a city or only a country is provided, infer the missing part when reasonably possible.
+4. Return starting_point and destination in "City, Country" format.
+5. Never replace the user's intended location with an unrelated location.
 
 3. Do NOT translate, correct, rename, replace, or modify the city or country names.
 
@@ -131,6 +132,8 @@ STRICT RULES:
     - budget values are numbers
 
 Return ONLY the JSON object.
+18. estimated_budget_USD.high MUST NOT exceed the user's provided budget.
+19. The itinerary must be designed around the user's provided budget.
 `;
 
 const parseLocation = (value) => {
@@ -162,21 +165,23 @@ const parseLocation = (value) => {
 
 app.get("/api/travel-plan", userAuth, async (req, res) => {
   try {
-    const startingCity = (req.query.startingCity || "").toString().trim();
-    const startingCountry = (req.query.startingCountry || "").toString().trim();
-    const city = (req.query.city || "").toString().trim();
-    const country = (req.query.country || "").toString().trim();
+    const startingPoint = (req.query.startingPoint || "").toString().trim();
+    const destination = (req.query.destination || "").toString().trim();
     const days = Number(req.query.days);
+    const budget =
+      req.query.budget !== undefined && req.query.budget !== ""
+        ? Number(req.query.budget)
+        : null;
 
-    if (!startingCity || !startingCountry) {
+    if (!startingPoint) {
       return res.status(400).json({
-        message: "Starting point city and country are required.",
+        message: "Starting point is required.",
       });
     }
 
-    if (!city || !country) {
+    if (!destination) {
       return res.status(400).json({
-        message: "Destination city and country are required.",
+        message: "Destination is required.",
       });
     }
 
@@ -185,18 +190,34 @@ app.get("/api/travel-plan", userAuth, async (req, res) => {
         message: "Days must be a number between 1 and 10.",
       });
     }
+    if (budget !== null && (!Number.isFinite(budget) || budget <= 0)) {
+      return res.status(400).json({
+        message: "Please enter a valid budget.",
+      });
+    }
 
-    const startingPoint = `${startingCity}, ${startingCountry}`;
-    const destination = `${city}, ${country}`;
-
-    if (
-      startingCity.toLowerCase() === city.toLowerCase() &&
-      startingCountry.toLowerCase() === country.toLowerCase()
-    ) {
+    if (startingPoint.toLowerCase() === destination.toLowerCase()) {
       return res.status(400).json({
         message: "Starting point and destination cannot be the same.",
       });
     }
+
+    const budgetInstruction = budget
+      ? `
+The user has provided a total trip budget of ${budget} USD.
+
+Design the entire itinerary around this budget.
+Keep accommodation, transportation, food, and activities realistic
+within approximately ${budget} USD.
+
+Do not recommend an itinerary that would clearly exceed this budget.
+`
+      : `
+The user did not provide a budget.
+
+Use normal destination-based cost assumptions and generate a practical
+itinerary with realistic estimated costs.
+`;
 
     const userPrompt = `
 Create a ${days}-day travel plan.
@@ -210,27 +231,12 @@ ${destination}
 Number of days:
 ${days}
 
-The starting point MUST remain exactly:
-${startingPoint}
+${budgetInstruction}
 
-The destination MUST remain exactly:
-${destination}
-
-Do not change the city or country names.
+The user may provide only a city, only a country, or City, Country.
+Infer missing location information when reasonably possible.
 
 Create exactly ${days} itinerary days.
-
-Day 1 should include realistic travel or arrival activities from:
-${startingPoint}
-
-to:
-${destination}
-
-${
-  days > 1
-    ? `Day ${days} should include realistic departure, checkout, or wind-down activities.`
-    : `Since this is a one-day trip, keep the itinerary realistic and concise.`
-}
 
 Return ONLY the required JSON object.
 `;
@@ -238,14 +244,8 @@ Return ONLY the required JSON object.
     const response = await client.chat.completions.create({
       model: MODEL,
       messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: userPrompt,
-        },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
       ],
     });
 
@@ -271,8 +271,12 @@ Return ONLY the required JSON object.
       });
     }
 
-    parsed.starting_point = startingPoint;
-    parsed.destination = destination;
+    if (!parsed.starting_point || !parsed.destination) {
+      return res.status(502).json({
+        message: "AI returned an incomplete travel plan. Please try again.",
+      });
+    }
+
     parsed.duration_days = days;
 
     if (!Array.isArray(parsed.sample_itinerary)) {
@@ -332,6 +336,7 @@ Return ONLY the required JSON object.
       sample_itinerary: parsed.sample_itinerary,
       estimated_budget_USD: parsed.estimated_budget_USD,
       local_tips: parsed.local_tips,
+      budget_USD: budget,
     });
 
     return res.status(200).json({

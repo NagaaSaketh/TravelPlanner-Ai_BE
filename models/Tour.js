@@ -23,6 +23,9 @@ const tourSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    budget_USD: {
+      type: Number,
+    },
     top_attractions: {
       type: [String],
       required: true,
